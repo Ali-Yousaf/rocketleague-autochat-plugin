@@ -1,0 +1,21 @@
+# BakkesMod / Visual Studio
+
+.vs/
+build/
+ipch/
+*.ipch
+*.pch
+
+bin/
+obj/
+Debug/
+Release/
+x64/
+x86/
+
+*.suo
+*.user
+*.log
+
+Thumbs.db
+Desktop.ini
