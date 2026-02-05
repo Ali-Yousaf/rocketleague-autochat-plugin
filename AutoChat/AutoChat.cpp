@@ -1,10 +1,10 @@
 #include "pch.h"
 #include "AutoChat.h"
-
 #include "bakkesmod/wrappers/GameWrapper.h"
-#include "bakkesmod/wrappers/CarWrapper.h"
-#include "bakkesmod/wrappers/BallWrapper.h"
+#include "bakkesmod/wrappers/GameObject/CarWrapper.h"
+#include "bakkesmod/wrappers/GameObject/BallWrapper.h"
 #include "bakkesmod/wrappers/CanvasWrapper.h"
+using namespace std;
 
 BAKKESMOD_PLUGIN(
     AutoChat,
@@ -13,7 +13,7 @@ BAKKESMOD_PLUGIN(
     PLUGINTYPE_FREEPLAY
 )
 
-std::shared_ptr<CVarManagerWrapper> _globalCvarManager;
+shared_ptr<CVarManagerWrapper> _globalCvarManager;
 
 // === Stats ===
 int jumpCount = 0;
@@ -23,32 +23,48 @@ int missCount = 0;
 
 // === State ===
 bool wasGroundedLastFrame = true;
-bool hasJumpedOnce = false;
+bool hasJumpedThisAirborne = false;
+bool hasDodgedThisAirborne = false;
+ControllerInput lastInput = {};
 
 void AutoChat::onLoad()
 {
     _globalCvarManager = cvarManager;
-
     LOG("Stat Tracker Loaded");
 
     // Draw overlay
     gameWrapper->RegisterDrawable(
-        std::bind(&AutoChat::RenderStats, this, std::placeholders::_1)
+        bind(&AutoChat::RenderStats, this, placeholders::_1)
     );
 
-    // Reset on kickoff / goal
+    // Reset on goal scored
     gameWrapper->HookEvent(
         "Function TAGame.GameEvent_Soccar_TA.EventGoalScored",
-        [this](std::string)
+        [this](string)
         {
             jumpCount = doubleJumpCount = flipCount = missCount = 0;
-            hasJumpedOnce = false;
+            hasJumpedThisAirborne = false;
+            hasDodgedThisAirborne = false;
+        }
+    );
+
+    // Reset on match start (works for both online and freeplay)
+    gameWrapper->HookEvent(
+        "Function TAGame.GameEvent_TA.Activated",
+        [this](string)
+        {
+            jumpCount = doubleJumpCount = flipCount = missCount = 0;
+            hasJumpedThisAirborne = false;
+            hasDodgedThisAirborne = false;
+            wasGroundedLastFrame = true;
+            lastInput = {};
         }
     );
 }
 
 void AutoChat::RenderStats(CanvasWrapper canvas)
 {
+    // Works in both online and freeplay
     if (!gameWrapper->IsInGame())
         return;
 
@@ -57,44 +73,69 @@ void AutoChat::RenderStats(CanvasWrapper canvas)
         return;
 
     bool isGrounded = car.IsOnGround();
+    ControllerInput input = car.GetInput();
 
-    // Jump detection
+    // Jump detection - transition from grounded to airborne
     if (wasGroundedLastFrame && !isGrounded)
     {
         jumpCount++;
-        hasJumpedOnce = true;
+        hasJumpedThisAirborne = true;
+        hasDodgedThisAirborne = false;
     }
 
-    // Double jump / flip detection
-    if (!isGrounded && hasJumpedOnce && car.HasDoubleJumped())
+    // Dodge/Flip detection - detect stick input while airborne
+    if (!isGrounded && hasJumpedThisAirborne)
     {
-        doubleJumpCount++;
-        hasJumpedOnce = false;
+        // Check if dodge input (pitch, roll, or yaw) changed from last frame
+        bool isDodging = (input.Pitch != 0.0f || input.Roll != 0.0f || input.Yaw != 0.0f);
+        bool wasDodging = (lastInput.Pitch != 0.0f || lastInput.Roll != 0.0f || lastInput.Yaw != 0.0f);
+
+        // If dodge input just started
+        if (isDodging && !wasDodging && !hasDodgedThisAirborne)
+        {
+            flipCount++;
+            hasDodgedThisAirborne = true;
+        }
     }
 
-    if (!isGrounded && car.HasFlipped())
+    // Double jump detection - second jump while still airborne
+    if (!isGrounded && hasJumpedThisAirborne && input.Jump && !lastInput.Jump)
     {
-        flipCount++;
-        hasJumpedOnce = false;
+        if (!hasDodgedThisAirborne)
+        {
+            doubleJumpCount++;
+        }
+        hasJumpedThisAirborne = false;
+        hasDodgedThisAirborne = false;
+    }
+
+    // Reset on landing
+    if (isGrounded && !wasGroundedLastFrame)
+    {
+        hasJumpedThisAirborne = false;
+        hasDodgedThisAirborne = false;
     }
 
     wasGroundedLastFrame = isGrounded;
+    lastInput = input;
 
     // === Draw UI ===
-    canvas.SetPosition({ 50, 50 });
+    int x = 50;
+    int y = 50;
+    int lineHeight = 25;
+
     canvas.SetColor({ 255, 255, 255, 255 });
+    canvas.DrawString("Stats Tracker", 1.0f, 1.0f, x, y);
 
-    canvas.DrawString("Stats Tracker", 1.2f);
+    y += lineHeight;
+    canvas.DrawString("Jumps: " + to_string(jumpCount), 1.0f, 1.0f, x, y);
 
-    canvas.SetPosition({ 50, 80 });
-    canvas.DrawString("Jumps: " + std::to_string(jumpCount));
+    y += lineHeight;
+    canvas.DrawString("Double Jumps: " + to_string(doubleJumpCount), 1.0f, 1.0f, x, y);
 
-    canvas.SetPosition({ 50, 105 });
-    canvas.DrawString("Double Jumps: " + std::to_string(doubleJumpCount));
+    y += lineHeight;
+    canvas.DrawString("Flips: " + to_string(flipCount), 1.0f, 1.0f, x, y);
 
-    canvas.SetPosition({ 50, 130 });
-    canvas.DrawString("Flips: " + std::to_string(flipCount));
-
-    canvas.SetPosition({ 50, 155 });
-    canvas.DrawString("Missed Shots: " + std::to_string(missCount));
+    y += lineHeight;
+    canvas.DrawString("Missed Shots: " + to_string(missCount), 1.0f, 1.0f, x, y);
 }

@@ -13,6 +13,5 @@ class AutoChat : public BakkesMod::Plugin::BakkesModPlugin
 	void onLoad() override;
 
 private:
-	void OnGoalScored();
 	void RenderStats(CanvasWrapper canvas);
 };
